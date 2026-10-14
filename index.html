@@ -1,0 +1,896 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Agent Builds, Traced</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Companion to "Prior Authorization, Traced": same paper/teal system, same trace + ledger + audit layout */
+  :root {
+    box-sizing: border-box;
+    --paper: #EDF0EC;
+    --paper-2: #E1E6DF;
+    --paper-3: #D5DBD2;
+    --ink: #141F1C;
+    --ink-muted: #505E55;
+    --ink-faint: #525E55;
+    --line: #C2CABE;
+    --line-strong: #A9B4A5;
+    --teal: #0F6159;
+    --teal-soft: #D8E8E4;
+    --on-teal: #F7FBFA;
+    --amber: #7E540A;
+    --amber-soft: #F2E4C8;
+    --graphite: #566070;
+    --graphite-soft: #E1E4E8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #091413; --paper-2: #0F1D1B; --paper-3: #152622;
+      --ink: #EAF0EB; --ink-muted: #A3B4AB; --ink-faint: #8AA098;
+      --line: #223D39; --line-strong: #2F534D;
+      --teal: #52C9BA; --teal-soft: #0F3430; --on-teal: #06100F;
+      --amber: #E6B65F; --amber-soft: #2E2517;
+      --graphite: #9BA6B4; --graphite-soft: #1A2026;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #091413; --paper-2: #0F1D1B; --paper-3: #152622;
+    --ink: #EAF0EB; --ink-muted: #A3B4AB; --ink-faint: #8AA098;
+    --line: #223D39; --line-strong: #2F534D;
+    --teal: #52C9BA; --teal-soft: #0F3430; --on-teal: #06100F;
+    --amber: #E6B65F; --amber-soft: #2E2517;
+    --graphite: #9BA6B4; --graphite-soft: #1A2026;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: inherit; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+    -webkit-text-size-adjust: 100%;
+  }
+  code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color: var(--teal); }
+  :focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+  #app { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+
+  /* hero */
+  .hero { padding: calc(32px + env(safe-area-inset-top, 0px)) 0 22px; }
+  .hero .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 0.76rem; color: var(--teal); letter-spacing: 0.04em; margin: 0 0 10px; }
+  .hero h1 {
+    font-size: clamp(1.7rem, 5.2vw, 2.6rem);
+    font-weight: 600; letter-spacing: -0.022em; line-height: 1.12;
+    margin: 0 0 14px; max-width: 20ch; text-wrap: balance;
+  }
+  .hero .standfirst { margin: 0; max-width: 62ch; color: var(--ink-muted); }
+  .hero .synthetic {
+    display: inline-block; margin-top: 14px;
+    font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; color: var(--ink-faint);
+    border: 1px solid var(--line); border-radius: 3px; padding: 3px 8px;
+  }
+
+  /* trace */
+  .trace-wrap { background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: 18px 16px; margin-bottom: 22px; }
+  .trace { display: flex; flex-direction: column; gap: 2px; }
+  .node { display: flex; align-items: center; gap: 12px; padding: 5px 2px; }
+  .node .dot {
+    flex: none; width: 15px; height: 15px; border-radius: 50%;
+    border: 2px solid var(--line-strong); background: transparent;
+    transition: background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
+  }
+  .node .label { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+  .node .label .name { font-weight: 600; font-size: 0.9rem; }
+  .node .label .sub { font-family: "IBM Plex Mono", monospace; font-size: 0.73rem; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node[data-state="granted"] .dot { background: var(--teal); border-color: var(--teal); }
+  .node[data-state="granted"] .label .sub { color: var(--teal); }
+  .node[data-state="denied"] .dot { background: var(--paper-2); border-color: var(--graphite); box-shadow: inset 0 0 0 3px var(--paper-2), 0 0 0 3px var(--graphite-soft); }
+  .node[data-state="denied"] .label .sub { color: var(--graphite); }
+  .node[data-state="flagged"] .dot { background: var(--amber); border-color: var(--amber); }
+  .node[data-state="flagged"] .label .sub { color: var(--amber); }
+  .connector { position: relative; width: 2px; height: 18px; margin-left: 13px; background: var(--line); }
+  .connector .pulse { position: absolute; left: -3px; top: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--teal); opacity: 0; }
+  .connector.active .pulse { animation: travel-y 640ms ease-in-out; }
+  .connector.blocked { background: repeating-linear-gradient(to bottom, var(--line) 0 3px, transparent 3px 6px); }
+  @keyframes travel-y { 0% { opacity: 1; top: 0; } 100% { opacity: 0; top: calc(100% - 8px); } }
+  @media (min-width: 720px) {
+    .trace { flex-direction: row; align-items: flex-start; }
+    .node { flex-direction: column; text-align: center; gap: 8px; flex: 1 1 0; min-width: 0; }
+    .node .label { align-items: center; width: 100%; }
+    .node .label .sub { max-width: 100%; }
+    .connector { width: auto; height: 2px; flex: 0 1 34px; margin-left: 0; margin-top: 7px; align-self: flex-start; }
+    .connector.blocked { background: repeating-linear-gradient(to right, var(--line) 0 3px, transparent 3px 6px); }
+    .connector .pulse { left: 0; top: -3px; }
+    .connector.active .pulse { animation: travel-x 640ms ease-in-out; }
+    @keyframes travel-x { 0% { opacity: 1; left: 0; } 100% { opacity: 0; left: calc(100% - 8px); } }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .connector.active .pulse { animation: none; opacity: 0; }
+    * { transition: none !important; }
+  }
+
+  /* layout */
+  .columns { display: block; }
+  @media (min-width: 900px) { .columns { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 22px; align-items: start; } }
+
+  /* ledger */
+  .ledger { background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: 24px 20px; min-width: 0; }
+  .ledger-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+  .entry-no { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; color: var(--ink-faint); }
+  .ledger-head h2 { font-size: 1.22rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+  .cap-tag { font-size: 0.8rem; color: var(--ink-muted); font-style: italic; }
+  .answer-line { font-size: 0.86rem; background: var(--teal-soft); border-left: 3px solid var(--teal); border-radius: 4px; padding: 9px 13px; margin: 12px 0 4px; }
+  .answer-line strong { color: var(--teal); font-weight: 600; }
+  .narrative { max-width: 62ch; margin: 12px 0 20px; }
+  .narrative p { margin: 0 0 10px; }
+  .narrative p:last-child { margin-bottom: 0; }
+
+  .action-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .action-row.spaced { margin-top: 14px; }
+  button.btn {
+    font: inherit; font-weight: 500; font-size: 0.92rem;
+    padding: 11px 16px; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--line-strong); background: transparent; color: var(--ink);
+    transition: border-color 160ms ease, background-color 160ms ease;
+  }
+  button.btn.primary { background: var(--teal); border-color: var(--teal); color: var(--on-teal); }
+  button.btn:disabled { opacity: 0.42; cursor: not-allowed; }
+  button.btn:not(:disabled):hover { border-color: var(--ink-faint); }
+  button.btn.primary:not(:disabled):hover { filter: brightness(1.08); }
+  button.btn.on { background: var(--teal-soft); border-color: var(--teal); }
+  .toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .toggle-row button.btn { padding: 9px 14px; font-size: 0.85rem; }
+
+  .result { margin-top: 14px; padding: 11px 14px; border-left: 3px solid var(--line-strong); background: var(--paper); font-size: 0.92rem; }
+  .result.granted { border-left-color: var(--teal); }
+  .result.denied { border-left-color: var(--graphite); }
+  .result.flagged { border-left-color: var(--amber); }
+  .result .result-label { font-weight: 600; display: block; margin-bottom: 2px; }
+
+  /* stage map */
+  .stages { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+  @media (min-width: 720px) { .stages { grid-template-columns: repeat(4, minmax(0,1fr)); } }
+  button.stage {
+    font: inherit; text-align: left; cursor: pointer;
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 10px 12px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+    transition: border-color 160ms ease, background-color 160ms ease;
+  }
+  button.stage:hover { border-color: var(--line-strong); }
+  button.stage.on { border-color: var(--teal); background: var(--teal-soft); }
+  .stage .s-no { font-family: "IBM Plex Mono", monospace; font-size: 0.7rem; color: var(--ink-faint); }
+  .stage .s-name { font-weight: 600; font-size: 0.92rem; }
+  .badge { align-self: flex-start; font-family: "IBM Plex Mono", monospace; font-size: 0.66rem; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-muted); }
+  .badge.shown { border-color: var(--teal); color: var(--teal); }
+  .badge.runtime { border-color: var(--graphite); color: var(--graphite); }
+  .badge.confirm { border-color: var(--amber); color: var(--amber); }
+  .stage-detail { margin-top: 12px; padding: 12px 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 5px; }
+  .stage-detail .sd-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .stage-detail .sd-head strong { font-size: 0.98rem; }
+  .stage-detail .sd-prod { font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; color: var(--teal); }
+  .stage-detail p { margin: 0; font-size: 0.92rem; max-width: 62ch; }
+
+  /* tables */
+  .table-scroll { overflow-x: auto; margin-top: 14px; }
+  table.datatable { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  table.datatable th, table.datatable td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.datatable th { font-weight: 600; color: var(--ink-muted); font-size: 0.78rem; white-space: nowrap; }
+  table.datatable td.mono { font-size: 0.8rem; white-space: nowrap; }
+  table.datatable td.shared { color: var(--graphite); background: var(--graphite-soft); }
+  table.datatable td.scoped { color: var(--teal); }
+  table.datatable td.off { color: var(--graphite); font-style: italic; }
+
+  .answers { display: grid; gap: 6px; margin-top: 14px; }
+  .answers .q { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: baseline; padding: 8px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 5px; font-size: 0.88rem; }
+  .answers .q .v { font-family: "IBM Plex Mono", monospace; font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
+  .answers .q .v.yes { color: var(--teal); }
+  .answers .q .v.no { color: var(--graphite); }
+
+  /* acceptance criteria */
+  .acs { display: grid; gap: 8px; margin-top: 14px; }
+  .ac { border: 1px solid var(--line); border-radius: 5px; padding: 10px 13px; background: var(--paper); }
+  .ac .ac-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .ac .ac-id { font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; color: var(--ink-faint); }
+  .ac .ac-who { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; font-weight: 600; }
+  .ac .ac-body { margin-top: 4px; font-size: 0.88rem; }
+  .ac .ac-note { margin-top: 4px; font-size: 0.82rem; color: var(--ink-muted); }
+  .ac[data-owner="auth0"] { border-color: var(--teal); }
+  .ac[data-owner="auth0"] .ac-who { color: var(--teal); }
+  .ac[data-owner="agent"] .ac-who { color: var(--ink-muted); }
+  .ac[data-owner="split"] .ac-who { color: var(--amber); }
+
+  /* phone */
+  .phone { margin-top: 16px; max-width: 300px; border: 1px solid var(--line-strong); border-radius: 18px; padding: 14px; background: var(--paper); }
+  .phone .p-app { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", monospace; font-size: 0.7rem; color: var(--ink-faint); margin-bottom: 8px; }
+  .phone .p-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+  .phone .p-body { font-size: 0.84rem; color: var(--ink-muted); margin-bottom: 12px; }
+  .phone .p-body .mono { font-size: 0.76rem; color: var(--ink); }
+  .phone .action-row button.btn { flex: 1 1 0; padding: 9px 10px; font-size: 0.85rem; }
+
+  pre.snippet { margin: 14px 0 0; padding: 12px 14px; background: var(--paper-3); border-radius: 5px; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; }
+  pre.snippet .add { color: var(--teal); }
+
+  ul.confirm { margin: 10px 0 0; padding-left: 18px; font-size: 0.9rem; max-width: 62ch; }
+  ul.confirm li { margin-bottom: 4px; }
+  h3.sub-head { font-size: 0.95rem; margin: 22px 0 0; }
+
+  /* tech panel */
+  details.tech { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+  details.tech summary { cursor: pointer; font-size: 0.88rem; color: var(--ink-muted); list-style: none; }
+  details.tech summary::-webkit-details-marker { display: none; }
+  details.tech summary::before { content: "+ "; font-family: "IBM Plex Mono", monospace; color: var(--teal); }
+  details.tech[open] summary::before { content: "\2212 "; }
+  details.tech pre { margin: 12px 0 4px; padding: 12px 14px; background: var(--paper-3); border-radius: 5px; overflow-x: auto; font-size: 0.78rem; line-height: 1.55; }
+  details.tech .tech-note { margin-top: 8px; font-size: 0.82rem; color: var(--ink-muted); max-width: 66ch; }
+
+  /* audit */
+  .audit { background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: 16px 16px 12px; margin-top: 22px; }
+  @media (min-width: 900px) { .audit { margin-top: 0; position: sticky; top: calc(16px + env(safe-area-inset-top, 0px)); } }
+  .audit h3 { font-size: 0.82rem; font-weight: 600; margin: 0 0 3px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .audit .count { font-family: "IBM Plex Mono", monospace; color: var(--ink-faint); font-weight: 400; }
+  .audit .audit-sub { font-size: 0.78rem; color: var(--ink-muted); margin: 0 0 10px; }
+  .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  button.chip { font: inherit; font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line-strong); background: transparent; color: var(--ink-muted); cursor: pointer; }
+  button.chip.on { background: var(--teal-soft); border-color: var(--teal); color: var(--teal); }
+  .audit ol { list-style: none; margin: 0; padding: 0; max-height: 380px; overflow-y: auto; }
+  .audit li { border-top: 1px solid var(--line); padding: 7px 0; font-size: 0.78rem; display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: baseline; }
+  .audit li .t { font-family: "IBM Plex Mono", monospace; color: var(--ink-faint); font-size: 0.72rem; }
+  .audit li .what { min-width: 0; }
+  .audit li .who { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; color: var(--ink-muted); display: block; overflow-wrap: anywhere; }
+  .audit li[data-outcome="deny"] .verdict { color: var(--graphite); font-weight: 600; }
+  .audit li[data-outcome="allow"] .verdict { color: var(--teal); font-weight: 600; }
+  .audit li[data-outcome="info"] .verdict { color: var(--ink-muted); font-weight: 600; }
+  .audit li.empty-state { display: block; border-top: none; color: var(--ink-faint); font-style: italic; }
+
+  /* nav */
+  .navbar { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 20px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }
+  .navbar .inner { width: 100%; max-width: 1100px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .navbar .progress { font-family: "IBM Plex Mono", monospace; font-size: 0.78rem; color: var(--ink-faint); white-space: nowrap; }
+  .closing-note { text-align: center; font-size: 0.78rem; color: var(--ink-faint); margin: 20px 0 10px; }
+  .restart-link { background: none; border: none; color: var(--teal); font: inherit; font-size: 0.9rem; cursor: pointer; padding: 4px 0; text-decoration: underline; }
+</style>
+
+<div id="app">
+  <header class="hero">
+    <p class="eyebrow">COMPANION TO PRIOR AUTHORIZATION, TRACED</p>
+    <h1>One user story, built by agents, followed all the way to main.</h1>
+    <p class="standfirst">The runtime demo followed an agent already in production. This one goes a step earlier, into Pacca's control plane, where agents write the stories and the code that become those production agents. Each time one of them reaches into a customer's tools, Auth0 makes the call first.</p>
+    <span class="synthetic">Schematic of the control plane, fictional customers, no real data</span>
+  </header>
+
+  <section class="trace-wrap" aria-label="System trace">
+    <div class="trace">
+      <div class="node" data-node="agent"><span class="dot"></span><span class="label"><span class="name">Build runner</span><span class="sub">no identity of its own</span></span></div>
+      <div class="connector" data-connector="agent-connector"><span class="pulse"></span></div>
+      <div class="node" data-node="connector"><span class="dot"></span><span class="label"><span class="name">Code connector</span><span class="sub">one org-level token</span></span></div>
+      <div class="connector" data-connector="connector-vault"><span class="pulse"></span></div>
+      <div class="node" data-node="vault"><span class="dot"></span><span class="label"><span class="name">Token Vault</span><span class="sub">not in use</span></span></div>
+      <div class="connector" data-connector="vault-github"><span class="pulse"></span></div>
+      <div class="node" data-node="github"><span class="dot"></span><span class="label"><span class="name">GitHub</span><span class="sub">cd-health/denial-clusterer</span></span></div>
+      <div class="connector" data-connector="github-approver"><span class="pulse"></span></div>
+      <div class="node" data-node="approver"><span class="dot"></span><span class="label"><span class="name">Approver</span><span class="sub">M. Chen</span></span></div>
+    </div>
+  </section>
+
+  <div class="columns">
+    <main>
+      <section class="ledger" id="ledger"></section>
+      <p class="closing-note">Built to show where the pattern attaches. Field names and payloads are illustrative, not production schemas.</p>
+    </main>
+    <aside class="audit" aria-label="Audit trail">
+      <h3>Audit trail <span class="count" id="auditCount">0</span></h3>
+      <p class="audit-sub">Every entry names the agent that acted and the person it acted for.</p>
+      <div class="filter-chips" id="filterChips">
+        <button class="chip on" type="button" data-filter="">All</button>
+        <button class="chip" type="button" data-filter="build-runner">build-runner</button>
+        <button class="chip" type="button" data-filter="m.chen">m.chen</button>
+        <button class="chip" type="button" data-filter="riverside">riverside</button>
+      </div>
+      <ol id="auditList"></ol>
+    </aside>
+  </div>
+
+  <footer class="navbar">
+    <div class="inner">
+      <button id="prevBtn" class="btn" type="button">Back</button>
+      <div class="progress" id="progressText">1 of 6</div>
+      <button id="nextBtn" class="btn primary" type="button">Continue</button>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var RUNNER = "agent:build-runner";
+  var OWNER = "user:j.ortiz";
+  var APPROVER = "user:m.chen";
+  var REPO = "cd-health/denial-clusterer";
+  var OTHER_REPO = "riverside/intake-router";
+
+  function blankWorld() {
+    return {
+      stage: "build",
+      issued: false,
+      view: "today",
+      pushed: false,
+      mergeTried: false,
+      repoTried: false,
+      lastCheck: null,
+      mergeStatus: null,
+      mergeDecision: null,
+      standard: false,
+      standardLogged: false,
+      revoked: false,
+      retried: false,
+      audit: [],
+      filter: "",
+      clock: 0
+    };
+  }
+
+  var world = blankWorld();
+  var TOTAL = 6;
+  var step = 1;
+  var done = { 1: true, 2: false, 3: false, 4: false, 5: false, 6: true };
+
+  var ledger = document.getElementById("ledger");
+  var prevBtn = document.getElementById("prevBtn");
+  var nextBtn = document.getElementById("nextBtn");
+  var progressText = document.getElementById("progressText");
+  var auditList = document.getElementById("auditList");
+  var auditCount = document.getElementById("auditCount");
+
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function $(id) { return document.getElementById(id); }
+  function json(o) { return esc(JSON.stringify(o, null, 2)); }
+
+  /* ---------- audit ---------- */
+  function stamp() {
+    var t = 10 * 3600 + 14 * 60 + 5 + world.clock * 41;
+    world.clock += 1;
+    function p(n) { return n < 10 ? "0" + n : "" + n; }
+    return p(Math.floor(t / 3600) % 24) + ":" + p(Math.floor(t / 60) % 60) + ":" + p(t % 60);
+  }
+  function logEvent(actor, verdict, detail, outcome) {
+    var e = { t: stamp(), actor: actor, verdict: verdict, detail: detail, outcome: outcome };
+    world.audit.push(e);
+    renderAudit();
+    return e;
+  }
+  function unlogEvent(e) {
+    if (!e) return;
+    var i = world.audit.indexOf(e);
+    if (i !== -1) { world.audit.splice(i, 1); renderAudit(); }
+  }
+  function renderAudit() {
+    auditCount.textContent = String(world.audit.length);
+    if (!world.audit.length) {
+      auditList.innerHTML = '<li class="empty-state">Nothing has happened yet.</li>';
+      return;
+    }
+    var f = world.filter.toLowerCase();
+    var items = !f ? world.audit : world.audit.filter(function (e) {
+      return (e.actor + " " + e.verdict + " " + e.detail).toLowerCase().indexOf(f) !== -1;
+    });
+    if (!items.length) {
+      auditList.innerHTML = '<li class="empty-state">Nothing matches "' + esc(world.filter) + '" yet.</li>';
+      return;
+    }
+    auditList.innerHTML = items.slice().reverse().map(function (e) {
+      return '<li data-outcome="' + e.outcome + '"><span class="t">' + e.t + '</span>' +
+        '<span class="what"><span class="verdict">' + esc(e.verdict) + '</span> ' + esc(e.detail) +
+        '<span class="who">' + esc(e.actor) + '</span></span></li>';
+    }).join("");
+  }
+  $("filterChips").addEventListener("click", function (ev) {
+    var b = ev.target.closest("button.chip");
+    if (!b) return;
+    world.filter = b.getAttribute("data-filter");
+    Array.prototype.forEach.call(this.querySelectorAll("button.chip"), function (c) { c.classList.toggle("on", c === b); });
+    renderAudit();
+  });
+
+  /* ---------- trace ---------- */
+  function pulse(name) {
+    var el = document.querySelector('.connector[data-connector="' + name + '"]');
+    if (!el) return;
+    el.classList.remove("active"); void el.offsetWidth; el.classList.add("active");
+  }
+  function setNode(node, state, sub) {
+    var el = document.querySelector('.node[data-node="' + node + '"]');
+    if (!el) return;
+    if (state) el.setAttribute("data-state", state); else el.removeAttribute("data-state");
+    el.querySelector(".sub").textContent = sub;
+  }
+  function setBlocked(name, on) {
+    var el = document.querySelector('.connector[data-connector="' + name + '"]');
+    if (el) el.classList.toggle("blocked", !!on);
+  }
+  function renderNodes() {
+    if (world.revoked) setNode("agent", "denied", "access pulled");
+    else if (world.issued) setNode("agent", "granted", RUNNER);
+    else setNode("agent", null, "no identity of its own");
+
+    setBlocked("connector-vault", false);
+    if (world.revoked && world.retried) { setNode("connector", "denied", "token rejected"); setBlocked("connector-vault", true); }
+    else if (world.lastCheck === "merge") { setNode("connector", "denied", "merge not in scope"); setBlocked("connector-vault", true); }
+    else if (world.lastCheck === "repo") { setNode("connector", "denied", "not assigned to riverside"); setBlocked("connector-vault", true); }
+    else if (world.pushed) setNode("connector", "granted", "scope and project checked");
+    else if (world.issued) setNode("connector", null, "checks every request");
+    else setNode("connector", null, "one org-level token");
+
+    if (world.pushed) setNode("vault", "granted", "GitHub token per request");
+    else if (world.issued) setNode("vault", null, "holds GitHub access");
+    else setNode("vault", null, "not in use");
+
+    if (world.mergeStatus === "approved") setNode("github", "granted", "PR #4 merged to main");
+    else if (world.pushed) setNode("github", "granted", "PR #4 opened");
+    else setNode("github", null, REPO);
+
+    if (world.mergeStatus === "pending") setNode("approver", "flagged", "waiting on M. Chen");
+    else if (world.mergeStatus === "approved") setNode("approver", "granted", "merge approved");
+    else if (world.mergeStatus === "declined") setNode("approver", "denied", "merge declined");
+    else setNode("approver", null, "M. Chen");
+  }
+
+  function retiredNote(what) {
+    return '<div class="result denied"><span class="result-label">The build runner\'s access was pulled.</span>' +
+      'You pulled it in the last entry. It has nothing left to ' + what + ' with, and every other agent kept working.</div>';
+  }
+
+  /* ---------- data ---------- */
+  var STAGES = [
+    { id: "submit", name: "Submit", badge: null, prod: "Organizations, enterprise SSO",
+      text: "Customer teams sign in with their own company login. Each customer is its own organization in Auth0, so a CD Health user only ever sees CD Health's portfolio." },
+    { id: "review", name: "Review", badge: null, prod: "Roles, fine-grained authorization",
+      text: "Who can see and score which ideas follows the customer's own structure. A pharmacy lead sees the pharmacy portfolio, not every project in the account, and new projects inherit that automatically." },
+    { id: "approve", name: "Approve", badge: null, prod: "Verified sign-in, fine-grained authorization",
+      text: "Approval is tied to a named person with a verified login. Fine-grained checks add the rules a role alone cannot express: approve only within your own portfolio, and never approve a project you submitted yourself." },
+    { id: "design", name: "Design", badge: null, prod: "Agents as Principal",
+      text: "The agents that draft personas, journeys and screens each get their own identity, so you can see which one touched which file." },
+    { id: "requirements", name: "Requirements", badge: "shown", prod: "Agents as Principal",
+      text: "Story Generator, Gap Analyzer and Doc Ingestion each get an identity and a narrow set of permissions. Story Generator can write stories to Jira. It cannot touch code." },
+    { id: "build", name: "Build", badge: "shown", prod: "Token Vault, fine-grained authorization, Async Authorization",
+      text: "The build runner can push to a feature branch and open a pull request for the project it was assigned. Merging to main waits for a named person. The rest of this walkthrough follows one story through this stage." },
+    { id: "deploy", name: "Deploy", badge: "confirm", prod: "Depends on your setup",
+      text: "The deploy step reaches into the customer's own cloud. How it gets those credentials today decides how Auth0 fits here, so this one is a question for you." },
+    { id: "monitor", name: "Monitor", badge: "runtime", prod: "Agents as Principal, FGA, Async Authorization",
+      text: "Once an agent is live, it is the runtime demo: identity issued at approval, the warehouse knowing which agent is asking, a check on every record, and patient consent." }
+  ];
+  var BADGE_TEXT = { shown: "In this demo", confirm: "To confirm", runtime: "Runtime demo" };
+
+  var AGENTS = [
+    { name: "Story Generator", id: "agent:story-generator", can: "Write stories to the project's Jira board" },
+    { name: "Gap Analyzer", id: "agent:gap-analyzer", can: "Read requirements and comment" },
+    { name: "Doc Ingestion", id: "agent:doc-ingestion", can: "Read the project's uploaded sources" },
+    { name: "Build runner", id: RUNNER, can: "Push to feature branches, open pull requests" },
+    { name: "Review agent", id: "agent:review-agent", can: "Read pull requests and leave review comments" },
+    { name: "Orchestrator", id: "agent:orchestrator", can: "Read project status, start builds" }
+  ];
+
+  /* ---------- steps ---------- */
+  var builders = {
+
+    1: {
+      title: "Where Auth0 attaches to the control plane",
+      tag: "Overview",
+      narrative: [
+        "Pacca takes an idea from submission to a monitored agent in eight stages. People approve along the way, and AI agents do most of the work in between: drafting personas, writing stories, writing code, opening pull requests.",
+        "At each stage, someone or something is acting inside a customer's tools. Pick a stage to see what Auth0 adds there."
+      ],
+      body: function () {
+        return '<div class="stages" id="stageGrid">' + STAGES.map(function (s, i) {
+          return '<button class="stage" type="button" data-stage="' + s.id + '">' +
+            '<span class="s-no">' + (i + 1) + '</span><span class="s-name">' + s.name + '</span>' +
+            (s.badge ? '<span class="badge ' + s.badge + '">' + BADGE_TEXT[s.badge] + '</span>' : '') +
+          '</button>';
+        }).join("") + '</div><div class="stage-detail" id="stageDetail" aria-live="polite"></div>';
+      },
+      wire: function () {
+        var grid = $("stageGrid"), detail = $("stageDetail");
+        function paint() {
+          var s = STAGES.filter(function (x) { return x.id === world.stage; })[0];
+          Array.prototype.forEach.call(grid.querySelectorAll("button.stage"), function (b) {
+            var on = b.getAttribute("data-stage") === world.stage;
+            b.classList.toggle("on", on);
+            b.setAttribute("aria-pressed", on ? "true" : "false");
+          });
+          detail.innerHTML = '<div class="sd-head"><strong>' + s.name + '</strong><span class="sd-prod">' + esc(s.prod) + '</span></div><p>' + esc(s.text) + '</p>';
+        }
+        grid.addEventListener("click", function (ev) {
+          var b = ev.target.closest("button.stage");
+          if (!b) return;
+          world.stage = b.getAttribute("data-stage");
+          paint();
+        });
+        paint();
+      }
+    },
+
+    2: {
+      title: "One shared connection today, one identity per agent",
+      tag: "Agents as Principal",
+      answers: "can we see which agent did what, and shut off just one",
+      narrative: [
+        "Today an admin connects GitHub and Jira once per customer, and every agent in Pacca uses that same connection. In the demo environment it is a personal access token, so every commit shows up under one engineer's name.",
+        "That is fine while building. It stops being fine the first time a customer asks which agent changed a file, or who said it could. Switch the view to see the difference."
+      ],
+      body: function () {
+        return '<div class="toggle-row">' +
+            '<button class="btn" id="viewToday" type="button">Today</button>' +
+            '<button class="btn" id="viewAuth0" type="button">With Auth0</button>' +
+          '</div><div id="viewWrap"></div>';
+      },
+      wire: function () {
+        var t = $("viewToday"), a = $("viewAuth0"), wrap = $("viewWrap");
+        function paint() {
+          var auth0 = world.view === "auth0";
+          t.classList.toggle("on", !auth0); a.classList.toggle("on", auth0);
+          t.setAttribute("aria-pressed", auth0 ? "false" : "true");
+          a.setAttribute("aria-pressed", auth0 ? "true" : "false");
+          var rows = AGENTS.map(function (g) {
+            if (!auth0) {
+              return '<tr><td>' + g.name + '</td><td class="mono shared">org connection</td><td class="shared">Anything the connection allows</td></tr>';
+            }
+            var off = world.revoked && g.id === RUNNER;
+            return '<tr><td>' + g.name + '</td><td class="mono ' + (off ? "off" : "scoped") + '">' + g.id + '</td>' +
+              '<td class="' + (off ? "off" : "") + '">' + (off ? "Access pulled" : g.can) + '</td></tr>';
+          }).join("");
+          var answers = [
+            ["Which agent made this change?", auth0 ? "Answered" : "Unknown"],
+            ["Which person was it acting for?", auth0 ? "Answered" : "Unknown"],
+            ["Can one agent be shut off alone?", auth0 ? "Yes" : "Only all of them"]
+          ].map(function (q) {
+            return '<div class="q"><span>' + q[0] + '</span><span class="v ' + (auth0 ? "yes" : "no") + '">' + q[1] + '</span></div>';
+          }).join("");
+          wrap.innerHTML = '<div class="table-scroll"><table class="datatable"><tr><th>Agent</th><th>Signs in as</th><th>Can do</th></tr>' + rows + '</table></div>' +
+            '<div class="answers">' + answers + '</div>';
+        }
+        t.addEventListener("click", function () { world.view = "today"; paint(); });
+        a.addEventListener("click", function () {
+          world.view = "auth0";
+          if (!world.issued) {
+            world.issued = true;
+            renderNodes();
+            logEvent("admin:pacca", "Issued", "6 agent identities for project ppm-0224, CD Health", "info");
+          }
+          done[2] = true;
+          updateNav();
+          paint();
+        });
+        paint();
+      }
+    },
+
+    3: {
+      title: "The build runner pushes CPD-14, and nothing more",
+      tag: "Token Vault and fine-grained authorization",
+      narrative: [
+        "The build runner picks up story CPD-14 for CD Health's denial clusterer. To push code, it asks Pacca's code connector, the same connector service that exists today.",
+        "Now the connector checks two things before it calls GitHub: does this agent have permission for this action, and is it assigned to this project. If both pass, it gets a GitHub token from Token Vault for this one request. Pacca no longer keeps a GitHub token of its own, and the agent never holds one."
+      ],
+      body: function () {
+        return '<div class="action-row"><button class="btn primary" id="pushBtn" type="button">Push CPD-14 to a feature branch</button></div>' +
+          '<div id="pushResult"></div>' +
+          '<div class="action-row spaced" id="tryRow" hidden>' +
+            '<button class="btn" id="mergeBtn" type="button">Now try merging into main</button>' +
+            '<button class="btn" id="repoBtn" type="button">Try pushing to a Riverside repo</button>' +
+          '</div>' +
+          '<div id="mergeResult"></div><div id="repoResult"></div><div id="retiredResult"></div>' +
+          '<details class="tech"><summary>Show the checks behind each answer</summary>' +
+            '<p class="tech-note">The build runner\'s token. It names the agent, the person it acts for, and what it may do.</p>' +
+            '<pre>' + json({ sub: RUNNER, principal_type: "agent", acting_for: OWNER, project: "ppm-0224", customer: "cd-health", scope: "code:push code:open_pr" }) + '</pre>' +
+            '<p class="tech-note">The project check. Riverside fails here because no relationship connects this agent to any Riverside project.</p>' +
+            '<pre>' + json({ check: { user: RUNNER, relation: "can_push", object: "repo:" + REPO }, response: { allowed: true },
+              path: ["repo:" + REPO + "#project@project:ppm-0224", "project:ppm-0224#assigned_agent@" + RUNNER] }) + '</pre>' +
+            '<p class="tech-note">The Token Vault exchange the connector makes. The GitHub token comes back for this request only.</p>' +
+            '<pre>' + json({ grant_type: "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+              subject_token: "<project owner's Auth0 token, held by the connector>",
+              subject_token_type: "urn:ietf:params:oauth:token-type:refresh_token",
+              requested_token_type: "http://auth0.com/oauth/token-type/federated-connection-access-token",
+              connection: "github" }) + '</pre>' +
+            '<p class="tech-note">Merging fails on scope, before any project check runs: code:merge was never granted to this agent. Two different reasons, same refusal at the connector.</p>' +
+            '<p class="tech-note">GitHub records the commit under the project owner who connected the account. Auth0\'s log records which agent made it. If you want GitHub itself to show a bot account, pair this with a GitHub App. Check current Token Vault docs for which providers it supports before relying on it for Jira or Azure DevOps.</p>' +
+          '</details>';
+      },
+      wire: function () {
+        var pushBtn = $("pushBtn"), mergeBtn = $("mergeBtn"), repoBtn = $("repoBtn"), tryRow = $("tryRow");
+        function paint() {
+          if (world.pushed) {
+            pushBtn.disabled = true; pushBtn.textContent = "Pushed, PR #4 open";
+            $("pushResult").innerHTML = '<div class="result granted"><span class="result-label">Allowed. Pull request #4 is open.</span>' +
+              'Both checks passed, Token Vault handed the connector a GitHub token for this one push, and the audit trail now names the agent and the person it acted for.</div>';
+            tryRow.hidden = false;
+            done[3] = true;
+          }
+          if (world.mergeTried) {
+            mergeBtn.disabled = true; mergeBtn.textContent = "Merge refused";
+            $("mergeResult").innerHTML = '<div class="result denied"><span class="result-label">Refused. Merging was never part of this agent\'s job.</span>' +
+              'The connector stopped it before GitHub was called. Merging is the next entry, and it needs a person.</div>';
+          }
+          if (world.repoTried) {
+            repoBtn.disabled = true; repoBtn.textContent = "Riverside refused";
+            $("repoResult").innerHTML = '<div class="result denied"><span class="result-label">Refused. Riverside is a different customer.</span>' +
+              'This agent is assigned to CD Health\'s project. Nothing in the story or the prompt can change that, because the check only looks at which agent is asking and which repo it wants.</div>';
+          }
+          if (world.revoked) {
+            pushBtn.disabled = true; mergeBtn.disabled = true; repoBtn.disabled = true;
+            $("retiredResult").innerHTML = retiredNote("push");
+          }
+          updateNav();
+        }
+        pushBtn.addEventListener("click", function () {
+          if (world.pushed || world.revoked) return;
+          world.pushed = true; world.lastCheck = null;
+          renderNodes(); pulse("agent-connector");
+          setTimeout(function () { pulse("connector-vault"); }, 320);
+          setTimeout(function () { pulse("vault-github"); }, 640);
+          logEvent(RUNNER + " for " + OWNER, "Allowed", "push to feature branch on " + REPO, "allow");
+          logEvent("connector:code", "Issued", "GitHub token from Token Vault, one request", "info");
+          logEvent(RUNNER + " for " + OWNER, "Opened", "PR #4 for CPD-14", "allow");
+          paint();
+        });
+        mergeBtn.addEventListener("click", function () {
+          if (world.mergeTried || world.revoked) return;
+          world.mergeTried = true; world.lastCheck = "merge";
+          renderNodes(); pulse("agent-connector");
+          logEvent(RUNNER + " for " + OWNER, "Denied", "merge PR #4 into main, not in scope", "deny");
+          paint();
+        });
+        repoBtn.addEventListener("click", function () {
+          if (world.repoTried || world.revoked) return;
+          world.repoTried = true; world.lastCheck = "repo";
+          renderNodes(); pulse("agent-connector");
+          logEvent(RUNNER + " for " + OWNER, "Denied", "push to " + OTHER_REPO + ", not assigned to riverside", "deny");
+          paint();
+        });
+        paint();
+      }
+    },
+
+    4: {
+      title: "Merging waits for a named person",
+      tag: "Async Authorization",
+      narrative: [
+        "Pull request #4 passed its tests and the agent code review. The build runner asks to merge. That request goes to M. Chen, the engineering lead on this project, as a notification on her phone. She does not need to be in Pacca to answer it.",
+        "Pacca already has approval gates in its own screens, and those stay. This turns the yes into a signed record tied to one verified person, which is what a customer's audit will look for."
+      ],
+      body: function () {
+        return '<div class="action-row"><button class="btn primary" id="requestBtn" type="button">Request the merge</button></div>' +
+          '<div id="phoneWrap"></div><div id="decisionResult"></div><div id="retiredResult4"></div>' +
+          '<details class="tech"><summary>Show the request she receives</summary>' +
+            '<pre>' + json({ login_hint: APPROVER, binding_message: "Merge PR #4 (CPD-14) into main", scope: "code:merge", requested_by: RUNNER, repo: REPO }) + '</pre>' +
+            '<p class="tech-note">After she approves, the connector merges with a permission good for this one pull request. The build runner\'s own permissions do not change, so the next merge asks again.</p>' +
+          '</details>';
+      },
+      wire: function () {
+        var req = $("requestBtn"), phoneWrap = $("phoneWrap"), out = $("decisionResult");
+        function paint() {
+          if (world.mergeStatus) {
+            req.disabled = true; req.textContent = "Sent to M. Chen";
+            phoneWrap.innerHTML = '<div class="phone" role="group" aria-label="Approver notification">' +
+                '<div class="p-app"><span>Auth0 Guardian</span><span>now</span></div>' +
+                '<div class="p-title">Approve a merge into main?</div>' +
+                '<div class="p-body">CPD-14 on <span class="mono">' + REPO + '</span>, requested by <span class="mono">' + RUNNER + '</span>.</div>' +
+                '<div class="action-row">' +
+                  '<button class="btn" id="declineBtn" type="button">Decline</button>' +
+                  '<button class="btn" id="approveBtn" type="button">Approve</button>' +
+                '</div>' +
+              '</div>';
+            var ap = $("approveBtn"), de = $("declineBtn");
+            ap.classList.toggle("on", world.mergeStatus === "approved");
+            de.classList.toggle("on", world.mergeStatus === "declined");
+            ap.addEventListener("click", function () { decide("approved"); });
+            de.addEventListener("click", function () { decide("declined"); });
+            if (world.revoked) { ap.disabled = true; de.disabled = true; }
+          }
+          if (world.mergeStatus === "pending") {
+            out.innerHTML = '<div class="result flagged"><span class="result-label">Waiting on M. Chen.</span>' +
+              'The pull request sits where it is. The agent cannot merge, retry its way through, or pick a different approver. Either answer below is a real outcome, and you can switch between them.</div>';
+          } else if (world.mergeStatus === "approved") {
+            out.innerHTML = '<div class="result granted"><span class="result-label">Approved and merged.</span>' +
+              'The merge carries three names: the agent that wrote it, the project owner it acted for, and the person who said yes.</div>';
+          } else if (world.mergeStatus === "declined") {
+            out.innerHTML = '<div class="result denied"><span class="result-label">Declined.</span>' +
+              'The pull request stays open for a person to look at. The agent gets an answer, not an error, and the decline is on record with her name on it.</div>';
+          }
+          if (world.mergeStatus && world.mergeStatus !== "pending") done[4] = true;
+          if (world.revoked) {
+            req.disabled = true;
+            $("retiredResult4").innerHTML = retiredNote("ask for a merge");
+          }
+          updateNav();
+        }
+        function decide(kind) {
+          if (world.revoked || world.mergeStatus === kind) return;
+          unlogEvent(world.mergeDecision);
+          world.mergeStatus = kind;
+          renderNodes(); pulse("github-approver");
+          world.mergeDecision = kind === "approved"
+            ? logEvent(APPROVER, "Approved", "merge of PR #4 into main", "allow")
+            : logEvent(APPROVER, "Declined", "merge of PR #4 into main", "deny");
+          paint();
+        }
+        req.addEventListener("click", function () {
+          if (world.mergeStatus || world.revoked) return;
+          world.mergeStatus = "pending";
+          renderNodes(); pulse("github-approver");
+          logEvent(RUNNER + " for " + OWNER, "Paused", "merge of PR #4 sent to " + APPROVER, "info");
+          paint();
+        });
+        paint();
+      }
+    },
+
+    5: {
+      title: "Stop rebuilding sign-in inside every agent",
+      tag: "Pacca standards",
+      narrative: [
+        "Look at what CPD-14 asked for: role checks on denial records, a tamper-evident audit log, and an export for compliance reviewers. All of it written from scratch, inside one build loop. In the run from the call, that story hit its cost cap and stopped.",
+        "Every agent Pacca ships will need the same thing. Pacca's standards are plain markdown, so one short section can hand the identity part to Auth0 for every project. Switch it on to see what is left for the agent."
+      ],
+      body: function () {
+        return '<div class="toggle-row">' +
+            '<button class="btn" id="stdOff" type="button">Without the standard</button>' +
+            '<button class="btn" id="stdOn" type="button">With the standard</button>' +
+          '</div><div id="stdWrap"></div>';
+      },
+      wire: function () {
+        var off = $("stdOff"), on = $("stdOn"), wrap = $("stdWrap");
+        var ACS = [
+          { id: "AC1", body: "Only users with the right role can read a denial record. Requests without a valid token are rejected and recorded.",
+            without: ["agent", "Agent builds it", "Login, roles, token checks and role storage, written and tested from scratch."],
+            withStd: ["auth0", "Auth0 handles it", "Login, roles and token checks come from Auth0. The agent adds one role check per route."] },
+          { id: "AC2", body: "Every read or write of a denial record creates a tamper-evident log entry with user, time, action and record.",
+            without: ["agent", "Agent builds it", "The log, plus the identity it records, both built by the agent."],
+            withStd: ["split", "Agent builds, Auth0 supplies who", "The record-level log stays the app's job. The user in each entry is now a verified Auth0 identity, not a string the app made up."] },
+          { id: "AC3", body: "Compliance reviewers can export the audit log filtered by date, user and action.",
+            without: ["agent", "Agent builds it", "Export, filters, and a compliance reviewer role it has to invent."],
+            withStd: ["split", "Agent builds, Auth0 supplies the role", "The export is still the agent's work. The compliance reviewer role is an Auth0 role, managed by the customer."] }
+        ];
+        function paint() {
+          var s = world.standard;
+          off.classList.toggle("on", !s); on.classList.toggle("on", s);
+          off.setAttribute("aria-pressed", s ? "false" : "true");
+          on.setAttribute("aria-pressed", s ? "true" : "false");
+          var cards = ACS.map(function (a) {
+            var o = s ? a.withStd : a.without;
+            return '<div class="ac" data-owner="' + o[0] + '"><div class="ac-head"><span class="ac-id">CPD-14 ' + a.id + '</span><span class="ac-who">' + o[1] + '</span></div>' +
+              '<div class="ac-body">' + esc(a.body) + '</div><div class="ac-note">' + esc(o[2]) + '</div></div>';
+          }).join("");
+          var snippet = s
+            ? '<pre class="snippet"><span class="add">## Identity and access\n- Users sign in through Auth0. Do not build login or password handling.\n- Read roles from the Auth0 token. Check them, do not store them.\n- Every agent this project deploys gets its own Auth0 identity.</span></pre>'
+            : '';
+          var note = s
+            ? '<div class="result granted"><span class="result-label">Less for the agent to write, and the same reviewed identity layer in every app eMids ships.</span>' +
+              'The audit log and the export are still real work. What goes away is the part every project would otherwise build differently.</div>'
+            : '';
+          wrap.innerHTML = '<div class="acs">' + cards + '</div>' + snippet + note;
+        }
+        off.addEventListener("click", function () { world.standard = false; paint(); });
+        on.addEventListener("click", function () {
+          world.standard = true;
+          if (!world.standardLogged) {
+            world.standardLogged = true;
+            logEvent("admin:pacca", "Updated", "org standard: identity and access", "info");
+          }
+          done[5] = true; updateNav();
+          paint();
+        });
+        paint();
+      }
+    },
+
+    6: {
+      title: "What this adds up to",
+      tag: "Recap",
+      narrative: [
+        "Each row below is something we saw in Pacca, and the Auth0 piece that addresses it. Then one last thing to try: pulling a single agent's access."
+      ],
+      body: function () {
+        var rows = [
+          ["Every commit shows up under one engineer", "Each agent has its own identity, and every action names the agent and the person it acted for"],
+          ["One org connection shared by every agent", "Permissions per agent, with Token Vault holding the GitHub access instead of Pacca"],
+          ["Approvals live only inside Pacca's screens", "Async Authorization makes merges and other sensitive steps a signed yes from one named person"],
+          ["Approval rights that depend on the project, not just the title", "Fine-grained checks for portfolio scope and for never approving your own project"],
+          ["Ask AI and search across every project", "Fine-grained authorization filters answers to the projects the person asking can see"],
+          ["Each project rebuilds sign-in and roles", "One Pacca standard hands that layer to Auth0"],
+          ["Agents running in production", "The same identity model, shown in the runtime demo"]
+        ].map(function (r) { return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>'; }).join("");
+        return '<div class="table-scroll" style="margin-top:0"><table class="datatable"><tr><th>What we saw in Pacca</th><th>What Auth0 does</th></tr>' + rows + '</table></div>' +
+          '<div class="action-row spaced">' +
+            '<button class="btn primary" id="revokeBtn" type="button">Pull the build runner\'s access</button>' +
+            '<button class="btn" id="retryBtn" type="button" disabled>Have it try another push</button>' +
+          '</div><div id="revokeResult"></div><div id="retryResult"></div>' +
+          '<h3 class="sub-head">Questions for you</h3>' +
+          '<ul class="confirm">' +
+            '<li>How do people sign in to Pacca today, and do customer users sign in, or only eMids staff?</li>' +
+            '<li>Would you rather GitHub show a bot account for agent commits? That points to a GitHub App alongside this.</li>' +
+            '<li>Which tools matter most beyond GitHub: Jira, Azure DevOps, Slack, Teams?</li>' +
+            '<li>How does the deploy step get credentials into a customer\'s AWS or Azure account?</li>' +
+          '</ul>' +
+          '<p style="margin-top:18px"><button class="restart-link" id="restartBtn" type="button">Start over</button></p>';
+      },
+      wire: function () {
+        var rv = $("revokeBtn"), rt = $("retryBtn");
+        function paint() {
+          if (world.revoked) {
+            rv.disabled = true; rv.textContent = "Access pulled";
+            rt.disabled = world.retried;
+            $("revokeResult").innerHTML = '<div class="result granted"><span class="result-label">One action, one agent.</span>' +
+              'No code change and no redeploy. The other five agents keep their access, and Pacca keeps running.</div>';
+          }
+          if (world.retried) {
+            rt.textContent = "Push refused";
+            $("retryResult").innerHTML = '<div class="result denied"><span class="result-label">Refused at the connector.</span>' +
+              'Its token no longer works anywhere, and Token Vault was never asked for a GitHub token.</div>';
+          }
+        }
+        rv.addEventListener("click", function () {
+          if (world.revoked) return;
+          if (!world.issued) { world.issued = true; }
+          world.revoked = true;
+          renderNodes();
+          logEvent("admin:pacca", "Revoked", RUNNER + " access pulled, 5 other agents unaffected", "info");
+          paint();
+        });
+        rt.addEventListener("click", function () {
+          if (!world.revoked || world.retried) return;
+          world.retried = true;
+          renderNodes(); pulse("agent-connector");
+          logEvent(RUNNER, "Denied", "push to " + REPO + ", agent access revoked", "deny");
+          paint();
+        });
+        $("restartBtn").addEventListener("click", function () {
+          world = blankWorld();
+          done = { 1: true, 2: false, 3: false, 4: false, 5: false, 6: true };
+          Array.prototype.forEach.call(document.querySelectorAll("#filterChips button.chip"), function (c) { c.classList.toggle("on", c.getAttribute("data-filter") === ""); });
+          renderNodes(); renderAudit(); go(1);
+        });
+        paint();
+      }
+    }
+  };
+
+  /* ---------- navigation ---------- */
+  function render() {
+    var b = builders[step];
+    ledger.innerHTML =
+      '<div class="ledger-head"><span class="entry-no">' + step + ' / ' + TOTAL + '</span><h2>' + esc(b.title) + '</h2><span class="cap-tag">' + esc(b.tag) + '</span></div>' +
+      (b.answers ? '<div class="answer-line"><strong>Answers:</strong> ' + esc(b.answers) + '</div>' : '') +
+      '<div class="narrative">' + b.narrative.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join("") + '</div>' +
+      b.body();
+    b.wire();
+    updateNav();
+  }
+  function updateNav() {
+    progressText.textContent = step + " of " + TOTAL;
+    prevBtn.disabled = step === 1;
+    nextBtn.hidden = step === TOTAL;
+    nextBtn.disabled = !done[step];
+  }
+  function go(n) {
+    step = Math.max(1, Math.min(TOTAL, n));
+    render();
+    var top = ledger.getBoundingClientRect().top + window.pageYOffset - 16;
+    if (window.pageYOffset > top) window.scrollTo(0, Math.max(0, top));
+  }
+  prevBtn.addEventListener("click", function () { go(step - 1); });
+  nextBtn.addEventListener("click", function () { if (done[step]) go(step + 1); });
+
+  renderNodes();
+  renderAudit();
+  render();
+})();
+</script>
+
+</body></html>
